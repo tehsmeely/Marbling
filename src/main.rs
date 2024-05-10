@@ -58,7 +58,6 @@ async fn main() {
             Camera2D::from_display_rect(rect),
         )
     };
-    set_camera(&screen_camera);
 
     let export_render_target = render_target(window_size.x as u32, window_size.y as u32);
     render_camera.render_target = Some(export_render_target);
@@ -74,41 +73,40 @@ async fn main() {
     let mut locked_for_export = false;
 
     loop {
+        set_camera(&render_camera);
         clear_background(WHITE);
 
-        if !locked_for_export {
-            if is_mouse_button_pressed(MouseButton::Left) & &settings.mouse_enabled {
-                let pos = screen_camera.screen_to_world(mouse_position().into());
-                let r = 100.0;
-                let new_drop = InkDrop::new(pos, r, random_color());
+        if is_mouse_button_pressed(MouseButton::Left) & &settings.mouse_enabled {
+            let pos = screen_camera.screen_to_world(mouse_position().into());
+            let r = 100.0;
+            let new_drop = InkDrop::new(pos, r, random_color());
 
+            for drop in droplets.iter_mut() {
+                drop.be_marbled_by(&new_drop, r);
+            }
+            droplets.push(new_drop);
+        }
+
+        if is_mouse_button_pressed(MouseButton::Right) && settings.mouse_enabled {
+            tine_drag = Some(TineDrag {
+                start: screen_camera.screen_to_world(mouse_position().into()),
+            });
+        }
+
+        if is_mouse_button_released(MouseButton::Right) && settings.mouse_enabled {
+            if let Some(TineDrag { start }) = tine_drag {
+                let end: Vec2 = screen_camera.screen_to_world(mouse_position().into());
+                let tine_line = TineLine::new(
+                    start,
+                    end - start,
+                    settings.tine_displacement,
+                    settings.tine_sharpness,
+                );
                 for drop in droplets.iter_mut() {
-                    drop.be_marbled_by(&new_drop, r);
+                    drop.be_tine_lined(&tine_line);
                 }
-                droplets.push(new_drop);
             }
-
-            if is_mouse_button_pressed(MouseButton::Right) && settings.mouse_enabled {
-                tine_drag = Some(TineDrag {
-                    start: screen_camera.screen_to_world(mouse_position().into()),
-                });
-            }
-
-            if is_mouse_button_released(MouseButton::Right) && settings.mouse_enabled {
-                if let Some(TineDrag { start }) = tine_drag {
-                    let end: Vec2 = screen_camera.screen_to_world(mouse_position().into());
-                    let tine_line = TineLine::new(
-                        start,
-                        end - start,
-                        settings.tine_displacement,
-                        settings.tine_sharpness,
-                    );
-                    for drop in droplets.iter_mut() {
-                        drop.be_tine_lined(&tine_line);
-                    }
-                }
-                tine_drag = None;
-            }
+            tine_drag = None;
         }
 
         // Draw all Drops
@@ -116,42 +114,51 @@ async fn main() {
             drop.draw();
         }
 
-        if !locked_for_export {
-            // Display guideline for tine line
-            if let Some(TineDrag { start }) = tine_drag {
-                let end: Vec2 = screen_camera.screen_to_world(mouse_position().into());
-                draw_line(start.x, start.y, end.x, end.y, 2.0, BLACK);
-            }
+        set_camera(&screen_camera);
+        if let Some(target) = &render_camera.render_target {
+            draw_texture_ex(
+                &target.texture,
+                0.0,
+                0.0,
+                WHITE,
+                DrawTextureParams {
+                    flip_x: false,
+                    flip_y: true,
+                    ..Default::default()
+                },
+            );
+        }
+        // Display guideline for tine line
+        if let Some(TineDrag { start }) = tine_drag {
+            let end: Vec2 = screen_camera.screen_to_world(mouse_position().into());
+            draw_line(start.x, start.y, end.x, end.y, 2.0, BLACK);
+        }
 
-            if let Some(event) = draw_ui(&mut settings, &window_size) {
-                match event {
-                    UiEvent::Save => {
-                        locked_for_export = true;
-                        set_camera(&render_camera);
+        if let Some(event) = draw_ui(&mut settings, &window_size) {
+            match event {
+                UiEvent::Save => {
+                    if let Some(target) = &render_camera.render_target {
+                        let filename =
+                            format!("marble_{}.png", chrono::Utc::now().format("%d_%m_%Y_%H%M"));
+                        target.texture.get_texture_data().export_png(&filename);
+                        println!("Saved marbled pattern to {}", filename);
                     }
-                    UiEvent::Clear => {
-                        droplets.clear();
-                    }
-                    UiEvent::Scale => {
-                        for drop in droplets.iter_mut() {
-                            drop.scale_points();
-                        }
+                }
+                UiEvent::Clear => {
+                    droplets.clear();
+                }
+                UiEvent::Scale => {
+                    for drop in droplets.iter_mut() {
+                        drop.scale_points();
                     }
                 }
             }
-
-            // FPS
-            draw_text(format!("FPS: {}", get_fps()).as_str(), 0., 16., 32., BLACK);
-        } else {
-            // Do Export
-            if let Some(target) = &render_camera.render_target {
-                target.texture.get_texture_data().export_png("marbling.png");
-            }
-            set_camera(&screen_camera);
-            locked_for_export = false;
         }
 
+        // FPS
+        draw_text(format!("FPS: {}", get_fps()).as_str(), 0., 16., 32., BLACK);
+
         // Done!
-        next_frame().await
+        next_frame().await;
     }
 }
